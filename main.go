@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/snowmerak/GitProfiles/backup"
 	"github.com/snowmerak/GitProfiles/key"
 )
 
@@ -121,7 +122,8 @@ func Add(baseDir, algo, name, email, host string) (privatePath, publicPath strin
 func main() {
 	if len(os.Args) < 2 {
 		fmt.Println("usage: gitprofiles <command> [flags]")
-		fmt.Println("commands: init, add")
+		fmt.Println("commands: init, add, backup, restore, ssh-config")
+		fmt.Println("use 'gitprofiles ssh-config status' to preview and 'gitprofiles ssh-config sync' to apply")
 		os.Exit(2)
 	}
 
@@ -203,6 +205,60 @@ func main() {
 			fmt.Println("unknown ssh-config subcommand")
 			os.Exit(2)
 		}
+	case "backup":
+		bCmd := flag.NewFlagSet("backup", flag.ExitOnError)
+		out := bCmd.String("out", "", "output encrypted backup file")
+		base := bCmd.String("base", os.Getenv(envDir), "base directory for gitprofiles (overrides HOME)")
+		pass := bCmd.String("pass", "", "passphrase for encryption (optional; prompt if empty)")
+		bCmd.Parse(os.Args[2:])
+		if *out == "" {
+			bCmd.Usage()
+			os.Exit(2)
+		}
+		var passBytes []byte
+		if *pass != "" {
+			passBytes = []byte(*pass)
+		} else {
+			fmt.Fprint(os.Stderr, "Passphrase: ")
+			p, err := readPassword()
+			if err != nil {
+				fmt.Fprintln(os.Stderr, "passphrase error:", err)
+				os.Exit(1)
+			}
+			passBytes = p
+		}
+		if err := backup.Backup(*base, *out, passBytes); err != nil {
+			fmt.Fprintln(os.Stderr, "backup error:", err)
+			os.Exit(1)
+		}
+		fmt.Println("backup written to", *out)
+	case "restore":
+		rCmd := flag.NewFlagSet("restore", flag.ExitOnError)
+		in := rCmd.String("in", "", "input encrypted backup file")
+		base := rCmd.String("base", os.Getenv(envDir), "target base directory for restore (overrides HOME)")
+		pass := rCmd.String("pass", "", "passphrase for decryption (optional; prompt if empty)")
+		rCmd.Parse(os.Args[2:])
+		if *in == "" {
+			rCmd.Usage()
+			os.Exit(2)
+		}
+		var passBytes []byte
+		if *pass != "" {
+			passBytes = []byte(*pass)
+		} else {
+			fmt.Fprint(os.Stderr, "Passphrase: ")
+			p, err := readPassword()
+			if err != nil {
+				fmt.Fprintln(os.Stderr, "passphrase error:", err)
+				os.Exit(1)
+			}
+			passBytes = p
+		}
+		if err := backup.Restore(*in, *base, passBytes); err != nil {
+			fmt.Fprintln(os.Stderr, "restore error:", err)
+			os.Exit(1)
+		}
+		fmt.Println("restore completed")
 	default:
 		fmt.Println("unknown command")
 		os.Exit(2)
