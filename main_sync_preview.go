@@ -1,0 +1,101 @@
+package main
+
+import (
+	"encoding/json"
+	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
+
+	"github.com/snowmerak/GitProfiles/sshconfig"
+)
+
+// PreviewSSHConfig returns entries to add/update and aliases to remove (if prune==true)
+func PreviewSSHConfig(baseDir, cfgPath string, prune bool) (adds []sshconfig.Entry, removes []string, err error) {
+	if baseDir == "" {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return nil, nil, err
+		}
+		baseDir = filepath.Join(home, ".ssh", "git_profiles")
+	}
+	if cfgPath == "" {
+		home, _ := os.UserHomeDir()
+		cfgPath = filepath.Join(home, ".ssh", "config")
+	}
+
+	metaPath := filepath.Join(baseDir, "meta", "keys.json")
+	b, err := os.ReadFile(metaPath)
+	if err != nil {
+		return nil, nil, err
+	}
+	var meta map[string]map[string]string
+	if err := json.Unmarshal(b, &meta); err != nil {
+		return nil, nil, err
+	}
+
+	desired := make(map[string]sshconfig.Entry)
+	for name, info := range meta {
+		host := info["host"]
+		priv := info["private"]
+		if host == "" || priv == "" {
+			continue
+		}
+		alias := fmt.Sprintf("git-%s-%s", name, strings.ReplaceAll(host, ".", "-"))
+		desired[alias] = sshconfig.Entry{Alias: alias, HostName: host, User: "git", IdentityFile: priv}
+	}
+
+	existing, err := sshconfig.ListEntries(cfgPath)
+	if err != nil && !os.IsNotExist(err) {
+		return nil, nil, err
+	}
+
+	// compute adds/updates
+	for alias, de := range desired {
+		found := false
+		for _, ex := range existing {
+			if ex.Alias == alias {
+				found = true
+				// if any field differs, mark for add/update
+				if ex.HostName != de.HostName || ex.User != de.User || ex.IdentityFile != de.IdentityFile {
+					adds = append(adds, de)
+				}
+				break
+			}
+		}
+		if !found {
+			adds = append(adds, de)
+		}
+	}
+
+	if prune {
+		for _, ex := range existing {
+			if strings.HasPrefix(ex.Alias, "git-") {
+				if _, ok := desired[ex.Alias]; !ok {
+					removes = append(removes, ex.Alias)
+				}
+			}
+		}
+	}
+
+	return adds, removes, nil
+}
+
+// SyncSSHConfig now uses PreviewSSHConfig to get the plan and apply it
+func SyncSSHConfig(baseDir, cfgPath string, prune bool) error {
+	adds, removes, err := PreviewSSHConfig(baseDir, cfgPath, prune)
+	if err != nil {
+		return err
+	}
+	for _, e := range adds {
+		if err := sshconfig.AddOrReplaceEntry(cfgPath, e); err != nil {
+			return err
+		}
+	}
+	for _, a := range removes {
+		if err := sshconfig.RemoveEntry(cfgPath, a); err != nil {
+			return err
+		}
+	}
+	return nil
+}

@@ -18,7 +18,7 @@ func TestInitAndAdd(t *testing.T) {
 	}
 
 	// add a key
-	priv, pub, err := Add(dir, "ed25519", "alice", "alice@example.com")
+	priv, pub, err := Add(dir, "ed25519", "alice", "alice@example.com", "github.com")
 	if err != nil {
 		t.Fatalf("Add failed: %v", err)
 	}

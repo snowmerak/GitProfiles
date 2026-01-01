@@ -49,7 +49,7 @@ func Init(baseDir string) error {
 }
 
 // Add generates a key using given algo and stores it under baseDir
-func Add(baseDir, algo, name, email string) (privatePath, publicPath string, err error) {
+func Add(baseDir, algo, name, email, host string) (privatePath, publicPath string, err error) {
 	if baseDir == "" {
 		home, err := os.UserHomeDir()
 		if err != nil {
@@ -104,6 +104,7 @@ func Add(baseDir, algo, name, email string) (privatePath, publicPath string, err
 		"private": privatePath,
 		"public":  publicPath,
 		"email":   email,
+		"host":    host,
 	}
 
 	out, err := json.MarshalIndent(meta, "", "  ")
@@ -140,18 +141,68 @@ func main() {
 		algo := addCmd.String("algo", "ed25519", "algorithm (ed25519, rsa2048, rsa4096, p256, p384, p521)")
 		name := addCmd.String("name", "", "profile name")
 		email := addCmd.String("email", "", "email/identity")
+		host := addCmd.String("host", "", "host to use in ssh config (e.g. github.com)")
 		base := addCmd.String("base", os.Getenv(envDir), "base directory for gitprofiles (overrides HOME)")
 		addCmd.Parse(os.Args[2:])
 		if *name == "" || *email == "" {
 			addCmd.Usage()
 			os.Exit(2)
 		}
-		priv, pub, err := Add(*base, *algo, *name, *email)
+		priv, pub, err := Add(*base, *algo, *name, *email, *host)
 		if err != nil {
 			fmt.Fprintln(os.Stderr, "add error:", err)
 			os.Exit(1)
 		}
 		fmt.Printf("private: %s\npublic: %s\n", priv, pub)
+	case "ssh-config":
+		if len(os.Args) < 3 {
+			fmt.Println("usage: gitprofiles ssh-config <status|sync> [flags]")
+			os.Exit(2)
+		}
+		sub := os.Args[2]
+		switch sub {
+		case "status":
+			statusCmd := flag.NewFlagSet("ssh-config status", flag.ExitOnError)
+			cfgPath := statusCmd.String("config", os.ExpandEnv("$HOME/.ssh/config"), "ssh config file path")
+			base := statusCmd.String("base", os.Getenv(envDir), "base directory for gitprofiles (overrides HOME)")
+			prune := statusCmd.Bool("prune", true, "show entries that would be removed if prune is enabled")
+			statusCmd.Parse(os.Args[3:])
+			adds, removes, err := PreviewSSHConfig(*base, *cfgPath, *prune)
+			if err != nil {
+				fmt.Fprintln(os.Stderr, "ssh-config status error:", err)
+				os.Exit(1)
+			}
+			if len(adds) == 0 && len(removes) == 0 {
+				fmt.Println("ssh-config is up to date")
+				return
+			}
+			if len(adds) > 0 {
+				fmt.Println("Entries to add/update:")
+				for _, e := range adds {
+					fmt.Printf("  - alias: %s host: %s identity: %s\n", e.Alias, e.HostName, e.IdentityFile)
+				}
+			}
+			if len(removes) > 0 {
+				fmt.Println("Entries to remove:")
+				for _, a := range removes {
+					fmt.Printf("  - alias: %s\n", a)
+				}
+			}
+		case "sync":
+			syncCmd := flag.NewFlagSet("ssh-config sync", flag.ExitOnError)
+			cfgPath := syncCmd.String("config", os.ExpandEnv("$HOME/.ssh/config"), "ssh config file path")
+			base := syncCmd.String("base", os.Getenv(envDir), "base directory for gitprofiles (overrides HOME)")
+			prune := syncCmd.Bool("prune", true, "remove stale managed entries not present in meta")
+			syncCmd.Parse(os.Args[3:])
+			if err := SyncSSHConfig(*base, *cfgPath, *prune); err != nil {
+				fmt.Fprintln(os.Stderr, "ssh-config sync error:", err)
+				os.Exit(1)
+			}
+			fmt.Println("ssh-config synced")
+		default:
+			fmt.Println("unknown ssh-config subcommand")
+			os.Exit(2)
+		}
 	default:
 		fmt.Println("unknown command")
 		os.Exit(2)
