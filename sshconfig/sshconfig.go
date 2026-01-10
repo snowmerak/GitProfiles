@@ -15,6 +15,36 @@ type Entry struct {
 	IdentityFile string
 }
 
+// toRelPath converts an absolute path to a path relative to home, prefixed with ~, if inside home.
+// It also ensures forward slashes for compatibility.
+func toRelPath(path string) string {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return filepath.ToSlash(path)
+	}
+	rel, err := filepath.Rel(home, path)
+	if err != nil {
+		return filepath.ToSlash(path)
+	}
+	if !strings.HasPrefix(rel, "..") && !strings.HasPrefix(rel, string(filepath.Separator)) {
+		return "~/" + filepath.ToSlash(rel)
+	}
+	return filepath.ToSlash(path)
+}
+
+// toAbsPath converts a path starting with ~/ or ~\ to an absolute path.
+func toAbsPath(path string) string {
+	if strings.HasPrefix(path, "~/") || strings.HasPrefix(path, "~\\") {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return path
+		}
+		// join purely with modification of 2:
+		return filepath.Join(home, path[2:])
+	}
+	return path
+}
+
 // AddOrReplaceEntry adds or replaces a managed block for alias in configPath.
 // If the file doesn't exist it is created.
 func AddOrReplaceEntry(configPath string, e Entry) error {
@@ -39,7 +69,7 @@ func AddOrReplaceEntry(configPath string, e Entry) error {
 		fmt.Sprintf("Host %s", e.Alias),
 		fmt.Sprintf("    HostName %s", e.HostName),
 		fmt.Sprintf("    User %s", e.User),
-		fmt.Sprintf("    IdentityFile \"%s\"", e.IdentityFile),
+		fmt.Sprintf("    IdentityFile \"%s\"", toRelPath(e.IdentityFile)),
 		"    IdentitiesOnly yes",
 		end,
 	}
@@ -137,6 +167,7 @@ func ListEntries(configPath string) ([]Entry, error) {
 					e.User = strings.TrimSpace(strings.TrimPrefix(l, "User "))
 				} else if strings.HasPrefix(l, "IdentityFile ") {
 					e.IdentityFile = strings.Trim(strings.TrimSpace(strings.TrimPrefix(l, "IdentityFile ")), "\"")
+					e.IdentityFile = toAbsPath(e.IdentityFile)
 				} else if strings.HasPrefix(l, "# END GITPROFILES ") {
 					out = append(out, e)
 					i = j
